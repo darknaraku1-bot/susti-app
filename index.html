@@ -102,7 +102,7 @@
                     <span id="notif-badge" class="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-bold" style="display: none;">0</span>
                 </button>
                 <button id="header-action-btn" style="display: none;" class="flex items-center gap-3 bg-[#00ff41] hover:bg-[#00cc33] text-black font-bold px-6 py-2 rounded-3xl transition-all active:scale-95 shadow-[0_0_20px_#00ff41]">
-                    </button>
+                </button>
             </div>
         </header>
 
@@ -118,7 +118,7 @@
                         <div id="quick-reminders" class="space-y-4"></div>
                     </div>
                     <div class="col-span-12 neon-card rounded-3xl p-8">
-                        <h3 class="text-xl mb-6 flex items-center gap-3"><i class="fa-solid fa-triangle-exclamation text-red-500"></i> ALERTAS DE SISTEMA (Críticos & Stock 0)</h3>
+                        <h3 class="text-xl mb-6 flex items-center gap-3"><i class="fa-solid fa-triangle-exclamation text-red-500"></i> ALERTAS DE SISTEMA (Críticos, Stock 0 & Agenda)</h3>
                         <div id="critical-alerts" class="grid grid-cols-1 md:grid-cols-3 gap-6"></div>
                     </div>
                 </div>
@@ -208,6 +208,11 @@
         let projects = [];
         let inventory = [];
 
+        function getLocalYMD() {
+            const now = new Date();
+            return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+        }
+
         function updateSystemDate() {
             const now = new Date();
             const dateOpts = { day: '2-digit', month: 'short', year: 'numeric' };
@@ -216,10 +221,21 @@
             document.getElementById('sidebar-date').textContent = `Corrientes • ${now.toLocaleDateString('es-ES', dateOpts).toUpperCase()}`;
             document.getElementById('agenda-month-title').textContent = `AGENDA • ${now.toLocaleDateString('es-ES', monthOpts).toUpperCase()}`;
             
-            // Setear fechas por defecto en los inputs a la fecha de hoy
-            const todayStr = now.toISOString().split('T')[0];
+            const todayStr = getLocalYMD();
             document.getElementById('proj-date').value = todayStr;
             document.getElementById('event-date').value = todayStr;
+        }
+
+        function getPendingEvents() {
+            const now = new Date();
+            const todayStr = getLocalYMD();
+            const currentTime = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+            
+            return events.filter(e => {
+                if (e.date < todayStr) return true; // Días pasados
+                if (e.date === todayStr && e.time <= currentTime) return true; // Hoy, hora cumplida o pasada
+                return false;
+            });
         }
 
         function loadData() {
@@ -230,11 +246,7 @@
             projects = savedProjects ? JSON.parse(savedProjects) : [];
             
             const savedStock = localStorage.getItem('susti_stock');
-            inventory = savedStock ? JSON.parse(savedStock) : [
-                { id: 1, name: "Filamento PETG", qty: 4, assignee: "Matías Sequeira" },
-                { id: 2, name: "Placas ESP32", qty: 12, assignee: "Maite Alcalá" },
-                { id: 3, name: "Tiras LED NeoPixel", qty: 0, assignee: "Triple M" }
-            ];
+            inventory = savedStock ? JSON.parse(savedStock) : [];
         }
 
         function saveData() {
@@ -266,7 +278,9 @@
         function updateAlertBadge() {
             const criticalProjs = projects.filter(p => p.status === "critical").length;
             const zeroStock = inventory.filter(i => i.qty <= 0).length;
-            const total = criticalProjs + zeroStock;
+            const pendingEvents = getPendingEvents().length;
+            
+            const total = criticalProjs + zeroStock + pendingEvents;
             
             const badge = document.getElementById('notif-badge');
             badge.textContent = total;
@@ -276,20 +290,22 @@
         function triggerNotifications() {
             const criticalProjs = projects.filter(p => p.status === "critical").length;
             const zeroStock = inventory.filter(i => i.qty <= 0).length;
+            const pendingEventsCount = getPendingEvents().length;
             
-            if (criticalProjs === 0 && zeroStock === 0) {
+            if (criticalProjs === 0 && zeroStock === 0 && pendingEventsCount === 0) {
                 showToast("Sistemas óptimos. Sin alertas pendientes.", "success");
             } else {
-                let msg = `⚠️ ALERTAS ACTIVAS: `;
+                let msg = `⚠️ ALERTAS: `;
                 if(zeroStock > 0) msg += `${zeroStock} items sin stock. `;
-                if(criticalProjs > 0) msg += `${criticalProjs} proyectos críticos.`;
+                if(criticalProjs > 0) msg += `${criticalProjs} proyectos críticos. `;
+                if(pendingEventsCount > 0) msg += `${pendingEventsCount} recordatorios vencidos.`;
                 showToast(msg, "error");
             }
         }
 
         // --- RENDERIZADO VISUAL ---
         function renderDashboard() {
-            const today = new Date().toISOString().split('T')[0];
+            const today = getLocalYMD();
             const todayEvents = events.filter(e => e.date === today);
             
             document.getElementById('today-events-count').textContent = todayEvents.length;
@@ -303,7 +319,7 @@
             `).join('');
             document.getElementById('quick-reminders').innerHTML = quickHTML || '<p class="opacity-50">Sin recordatorios próximos</p>';
 
-            // Combinar proyectos críticos y stock 0 en el dashboard
+            // Combinar proyectos críticos, stock 0 y eventos pendientes en el dashboard
             const criticalProjs = projects.filter(p => p.status === "critical").map(p => `
                 <div class="neon-card-alert p-5 rounded-2xl text-center">
                     <div class="text-xs opacity-60">PROYECTO CRÍTICO - ${p.due}</div>
@@ -316,8 +332,14 @@
                     <div class="font-medium text-sm mt-2">${i.name}</div>
                 </div>
             `);
+            const pendingEvts = getPendingEvents().map(e => `
+                <div class="neon-card-alert p-5 rounded-2xl text-center">
+                    <div class="text-xs text-red-400 font-bold tracking-widest">RECORDATORIO PENDIENTE</div>
+                    <div class="font-medium text-sm mt-2">${e.title} - ${e.time}</div>
+                </div>
+            `);
             
-            const alertsHtml = [...zeroStock, ...criticalProjs].join('');
+            const alertsHtml = [...zeroStock, ...criticalProjs, ...pendingEvts].join('');
             document.getElementById('critical-alerts').innerHTML = alertsHtml || '<p class="opacity-50 text-sm">Sistemas estabilizados.</p>';
         }
 
@@ -339,7 +361,7 @@
                         <div class="font-medium text-lg">${p.name}</div>
                         <div class="mt-6 grid grid-cols-2 gap-4">
                             <div><div class="text-xs opacity-60">TOTAL</div><div class="text-4xl font-bold neon-text">${p.qty}</div></div>
-                            <div><div class="text-xs opacity-60">ENTREGAR</div><div class="text-4xl font-bold neon-text text-[#00ff9f]">${p.deliverQty}</div></div>
+                            <div><div class="text-xs opacity-60">FECHA ENTREGA</div><div class="text-xl font-bold neon-text text-[#00ff9f] mt-2">${p.due}</div></div>
                         </div>
                         <div class="mt-6 text-xs flex justify-between items-center">
                             <div><span class="text-[#00ff41] mr-1">👤</span> ${p.assignee}</div>
@@ -452,12 +474,21 @@
             setTimeout(() => toast.remove(), 6500);
         }
 
-        // --- INICIALIZACIÓN ---
+        // --- INICIALIZACIÓN Y BUCLE DE TIEMPO ---
         window.onload = () => {
             updateSystemDate();
             loadData();
             updateAlertBadge();
             switchTab(0);
+            
+            // Revisa las alarmas automáticamente cada 60 segundos
+            setInterval(() => {
+                updateAlertBadge();
+                if (document.getElementById('tab-content-0').classList.contains('hidden') === false) {
+                    renderDashboard(); // Actualiza el inicio visualmente si estás en esa pestaña
+                }
+            }, 60000);
+
             setTimeout(() => showToast("✅ Bienvenido de vuelta. Conexión estable."), 800);
         };
     </script>
